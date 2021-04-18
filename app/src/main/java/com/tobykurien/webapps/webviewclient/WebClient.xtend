@@ -28,9 +28,7 @@ import java.util.HashMap
 import java.util.Set
 
 import static extension com.tobykurien.webapps.utils.Dependencies.*
-import com.tobykurien.webapps.db.DbService
 import android.content.Context
-import android.webkit.WebResourceRequest
 
 class WebClient extends WebViewClient {
 	public static val UNKNOWN_HOST = "999.999.999.999" // impossible hostname to avoid vuln
@@ -56,7 +54,7 @@ class WebClient extends WebViewClient {
 	}
 
 	override void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-		if (webapp == null || webapp.certIssuedBy == null) {
+		if (webapp === null || webapp.certIssuedBy === null) {
 			// no SSL cert was saved for this webapp, so show SSL error to user
 			var dlg = new DlgCertificate(error.certificate,
 						activity.getString(R.string.title_cert_untrusted),
@@ -151,7 +149,7 @@ class WebClient extends WebViewClient {
 			getRootDomain(wa.url).equals(getRootDomain(domain))
 		]
 
-		if (webapps == null || webapps.length == 0) {
+		if (webapps === null || webapps.length === 0) {
             if (openInExternalApp) {
                 Log.d("url_loading", "Sending to default app " + uri.toString)
                 var Intent i = new Intent(Intent.ACTION_VIEW)
@@ -161,6 +159,7 @@ class WebClient extends WebViewClient {
 				Log.d("url_loading", "Opening in new sandbox " + uri.toString)
                 // open in new sandbox
                 // delete all previous cookies
+				if (Debug.COOKIE) Log.d("cookie", "DELETING ALL COOKIES")
                 CookieManager.instance.removeAllCookie()
                 var i = new Intent(activity, WebAppActivity)
                 i.action = Intent.ACTION_VIEW
@@ -207,7 +206,7 @@ class WebClient extends WebViewClient {
 			return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream("[blocked]".getBytes()))
 		}
 
-		val cookieManager = CookieManager.instance
+		//val cookieManager = CookieManager.instance
 		// if (Debug.COOKIE && siteUrl !== null) Log.d("cookie", "Cookies for " + siteUrl + ": " +
         //         cookieManager.getCookie(siteUrl.toString()))
 
@@ -227,7 +226,7 @@ class WebClient extends WebViewClient {
 
 	// Get the host/domain from a URL or a host string.
 	def public static String getHost(String url, String defaultHost) {
-		if (url == null) return defaultHost
+		if (url === null) return defaultHost
 		try {
 			if (url.indexOf("://") > 0) {
 				return getHost(Uri.parse(url))
@@ -264,7 +263,7 @@ class WebClient extends WebViewClient {
 			var String[] parts = host.split("\\.").reverseView()
 			if (parts.length > 2) {
 				// handle things like mobile.site.co.za vs www1.api.site.com
-				if (parts.get(0).length == 2 && parts.get(1).length <= 3) {
+				if (parts.get(0).length === 2 && parts.get(1).length <= 3) {
 					return '''«{parts.get(2)}».«{parts.get(1)}».«{parts.get(0)}»'''
 				} else {
 					return '''«{parts.get(1)}».«{parts.get(0)}»'''
@@ -326,11 +325,11 @@ class WebClient extends WebViewClient {
 	def public static boolean isInSandbox(Uri uri, Set<String> domainUrls) {
 		if("data".equals(uri.getScheme()) || "blob".equals(uri.getScheme())) return true
 		var String host = uri.getHost()
-		if (host == null) return true;
+		if (host === null) return true;
 
 		for (String sites : domainUrls) {
 			for (String site : sites.split(" ")) {
-				if (site != null && host.toLowerCase().endsWith(site.toLowerCase())) {
+				if (site !== null && host.toLowerCase().endsWith(site.toLowerCase())) {
 					return true
 				}
 
@@ -341,6 +340,9 @@ class WebClient extends WebViewClient {
 	}
 
 	def protected boolean isInSandbox(Uri uri) {
+		// if allowRedirects, than all domains are in the sandbox
+		if (WebAppActivity.allowRedirects) return true;
+		
 		return isInSandbox(uri, domainUrls)
 	}
 

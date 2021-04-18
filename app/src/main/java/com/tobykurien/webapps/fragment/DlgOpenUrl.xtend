@@ -1,6 +1,7 @@
 package com.tobykurien.webapps.fragment
 
 import android.app.ProgressDialog
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -9,22 +10,18 @@ import android.support.v7.app.AlertDialog
 import android.util.Log
 import android.webkit.CookieManager
 import com.tobykurien.webapps.R
-import com.tobykurien.webapps.activity.BaseWebAppActivity
 import com.tobykurien.webapps.activity.WebAppActivity
-import com.tobykurien.webapps.data.Webapp
+import com.tobykurien.webapps.webviewclient.WebClient
 import java.io.InputStream
 import java.net.URL
 import java.net.URLConnection
 import org.xtendroid.annotations.AndroidDialogFragment
+import com.tobykurien.webapps.utils.Debug
 
 import static org.xtendroid.utils.AsyncBuilder.*
 
 import static extension com.tobykurien.webapps.utils.Dependencies.*
 import static extension org.xtendroid.utils.AlertUtils.*
-import android.content.Context
-import android.webkit.CookieSyncManager
-import android.os.Build
-import com.tobykurien.webapps.webviewclient.WebClient
 
 /**
  * Dialog to open a URL.
@@ -62,7 +59,7 @@ import com.tobykurien.webapps.webviewclient.WebClient
 	def boolean onOpenUrlClick() {
 		var url = txtOpenUrl.text.toString;
 		try {
-			openUrl(activity, url, chkNewSandbox.checked)
+			openUrl(activity, url, chkNewSandbox.checked, chkAllowRedirects.checked)
 		} catch (Exception e) {
 			txtOpenUrl.setError(getString(R.string.err_invalid_url), null)
 			return false
@@ -71,7 +68,7 @@ import com.tobykurien.webapps.webviewclient.WebClient
 		return true
 	}
 
-	def static openUrl(Context activity, String url, boolean newSandbox) {
+	def static openUrl(Context activity, String url, boolean newSandbox, boolean allowRedirects) {
 		var Uri uri = null
 		try {
 			if (url.trim().length == 0) throw new Exception();
@@ -91,18 +88,26 @@ import com.tobykurien.webapps.webviewclient.WebClient
 		val pd = new ProgressDialog(activity)
 		pd.setMessage(activity.getString(R.string.progress_opening_site))
 
-		async(pd) [
+		async(pd) [a,b|
 			var URLConnection con = new URL(originalUri.toString()).openConnection()
-			if (activity.settings.userAgent != null && 
+			if (activity.settings.userAgent !== null && 
 				activity.settings.userAgent.trim().length > 0) {
 				// User-agent may affect site redirects
 				con.setRequestProperty("User-Agent", activity.settings.userAgent)
 			}
 			con.connect()
-			var InputStream is = con.getInputStream()
-			var finalUrl = con.getURL()
-			is.close()
-			return finalUrl.toString()	
+
+			var InputStream is;
+			try {
+				is = con.getInputStream()
+				var finalUrl = con.getURL()
+				return finalUrl.toString()	
+			} catch (Exception e) {
+				// sometimes an exception is thrown, e.g. with mobile.twitter.com
+				return con.getURL().toString();
+			} finally {
+				is?.close()
+			}
 		].then [ result |
 			if (!pd.isShowing) return; // user cancelled
 
@@ -120,10 +125,13 @@ import com.tobykurien.webapps.webviewclient.WebClient
 				uriFinal = builder.build()
 			}
 
+			WebAppActivity.allowRedirects = allowRedirects
+
 			if (newSandbox) {
 				// open in new sandbox
 				// delete all previous cookies
-				CookieManager.instance.removeAllCookie()
+				if (Debug.COOKIE) Log.d("cookie", "DELETING ALL COOKIES")
+				CookieManager.instance.removeAllCookies([])
 				var i = new Intent(activity, WebAppActivity)
 				i.action = Intent.ACTION_VIEW
 				i.data = uriFinal

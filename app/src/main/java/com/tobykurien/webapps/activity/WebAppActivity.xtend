@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.AsyncTask
+import android.os.Message
+import android.os.Handler
 import android.support.v4.content.pm.ShortcutManagerCompat
 import android.support.v7.app.AlertDialog
 import android.util.Log
@@ -46,6 +48,7 @@ import android.app.ActivityManager.TaskDescription;
 
 import static extension com.tobykurien.webapps.utils.Dependencies.*
 import static extension org.xtendroid.utils.AlertUtils.*
+import org.xtendroid.annotations.BundleProperty
 
 /**
  * Extensions to the main activity for Android 3.0+, or at least it used to be.
@@ -68,8 +71,19 @@ public class WebAppActivity extends BaseWebAppActivity {
 	var private Bitmap favIcon = null;
 	val iconHandler = new FaviconHandler(this)
 
+	// A globally accessible flag to check if redirects are temporarily allowed
+	// This should only be enabled from DlgOpenUrl, and should be set to false
+	// as soon as user switches away from webapps, hence not affecting other webapps.
+	// Done this way to avoid having to pass this boolean around a lot of places!
+	var public static boolean allowRedirects = false;
+
 	override onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+
+		if (settings.secureWindows) {
+		    val window = getWindow();
+		    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+		}
 
 		// setup actionbar
 		val ab = getSupportActionBar();
@@ -82,15 +96,29 @@ public class WebAppActivity extends BaseWebAppActivity {
 
 		wv.onLongClickListener = [
 			var url = wv.hitTestResult.extra
-			if (url !== null) {
-				var i = new Intent(Intent.ACTION_VIEW);
-				i.setData(Uri.parse(url));
-				i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-				i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-				var chooser = Intent.createChooser(i, getString(R.string.title_open_with))
-				if (i.resolveActivity(getPackageManager()) != null) {
-				    context.startActivity(chooser);
-				}
+
+			if (wv.hitTestResult.type == WebView.HitTestResult.UNKNOWN_TYPE ||
+				wv.hitTestResult.type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+				wv.hitTestResult.type == WebView.HitTestResult.IMAGE_TYPE ||
+				wv.hitTestResult.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+				val Message message = new Message();
+			    message.setTarget(new Handler()[msg|
+			        var String title = msg.getData().getString("title");
+					if (title === null) title = msg.getData().getString("alt");
+					if (title === null) title = webapp.name;
+
+			        var String href = msg.getData().getString("url");
+					if (href === null) href = msg.getData().getString("href");
+					if (href === null) href = msg.getData().getString("src");
+
+					if (href !== null) {
+						shareURL(href, title);
+						return true;
+					}
+				]);
+    			wv.requestFocusNodeHref(message);
+			} else if (url !== null) {
+				shareURL(url, webapp.name);
 				return true;
 			}
 			
@@ -98,7 +126,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 		]
 
 		// load a favico if it already exists
-		val favIcon = iconHandler.getFavIcon(webappId)
+		val favIcon = iconHandler.getFavIcon(webapp.id)
 		updateActionBar(favIcon)
 	}
 
@@ -118,7 +146,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 	override protected onPause() {
 		super.onPause()
 
-		if (webappId < 0) {
+		if (webapp.id < 0) {
 			// clean up data left behind by this webapp
 			clearWebviewCache(wv)
 		}
@@ -145,7 +173,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 		updateImageMenu();
 
 		shortcutMenu = menu.findItem(R.id.menu_shortcut);
-		if (webappId < 0) {
+		if (webapp.id < 0) {
 			shortcutMenu.enabled = false;
 		}
 
@@ -200,13 +228,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 				return true;
 			}
 			case R.id.menu_share: {
-				var share = new Intent(Intent.ACTION_SEND)
-				share.setType("text/plain")
-				share.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET)
-				share.putExtra(Intent.EXTRA_SUBJECT, webapp.name);
-				share.putExtra(Intent.EXTRA_TEXT, wv.url);
-
-				startActivity(Intent.createChooser(share, getString(R.string.menu_share)));
+				shareURL(wv.url, webapp.name);
 				return true;
 			}
 			case R.id.menu_shortcut: {
@@ -258,10 +280,10 @@ public class WebAppActivity extends BaseWebAppActivity {
 			])
 			.setPositiveButton(android.R.string.ok, [ dlg, i |
 				// save font size
-				if (webappId > 0) {
+				if (webapp.id > 0) {
 					db.update(DbService.TABLE_WEBAPPS, #{
 						'fontSize' -> webapp.fontSize
-					}, webappId)
+					}, webapp.id)
 				}
 	
 				dlg.dismiss
@@ -286,10 +308,10 @@ public class WebAppActivity extends BaseWebAppActivity {
 						wv.settings.userAgentString = webapp.userAgent
 
 						// save user agent
-						if (webappId > 0) {
+						if (webapp.id > 0) {
 							db.update(DbService.TABLE_WEBAPPS, #{
 								'userAgent' -> webapp.userAgent
-							}, webappId)
+							}, webapp.id)
 							wv.reload()
 						}
 		
@@ -297,10 +319,10 @@ public class WebAppActivity extends BaseWebAppActivity {
 					]
 				} else {
 					// save user agent
-					if (webappId > 0) {
+					if (webapp.id > 0) {
 						db.update(DbService.TABLE_WEBAPPS, #{
 							'userAgent' -> webapp.userAgent
-						}, webappId)
+						}, webapp.id)
 						wv.reload()
 					}
 	
@@ -337,7 +359,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 		super.onPageLoadDone();
 
 		val domain = WebClient.getRootDomain(webapp.url)
-		val cookies = CookieManager.instance.getCookie(webapp.url)
+		val cookies = CookieManager.instance.getCookie("https://" + domain)
 		if (webapp != null && cookies != null && webapp.id > 0 &&
 				!cookies.equals(webapp.cookies)) {
 			db.saveCookies(webapp)
@@ -385,8 +407,8 @@ public class WebAppActivity extends BaseWebAppActivity {
 			Thread.sleep(1000) // wait till all icons are received, hopefully
 			return true
 		].then[
-			if (webappId >= 0 && favIcon !== null) {
-				iconHandler.saveFavIcon(webappId, favIcon)
+			if (webapp.id >= 0 && favIcon !== null) {
+				iconHandler.saveFavIcon(webapp.id, favIcon)
 			} else {
 				unsavedFavicon = favIcon
 			}
@@ -418,11 +440,11 @@ public class WebAppActivity extends BaseWebAppActivity {
 	 */
 	def private void dlgSave() {
 		var dlg = new DlgSaveWebapp(
-						webappId, wv.getTitle(), wv.getUrl(), 
+						webapp.id, wv.getTitle(), wv.getUrl(), 
 						wv.certificate,
 						unblock);
 
-		val isNewWebapp = if(webappId < 0) true else false;
+		val isNewWebapp = if(webapp.id < 0) true else false;
 
 		dlg.setOnSaveListener [ wapp |
 			putWebappId(wapp.id)
@@ -430,18 +452,21 @@ public class WebAppActivity extends BaseWebAppActivity {
 
 			// save any unblocked domains and cookies
 			if (isNewWebapp) {
-				saveWebappUnblockList(webappId, unblock)
+				saveWebappUnblockList(webapp.id, unblock)
 				db.saveCookies(webapp)
 			}
 
 			// if we have unsaved icon, save it
 			if (unsavedFavicon != null) {
-				onReceivedFavicon(wv, unsavedFavicon)
+				iconHandler.saveFavIcon(webapp.id, unsavedFavicon)
 				unsavedFavicon = null
 			}
 
 			shortcutMenu.enabled = true;
 			shortcutMenu.visible = true;
+
+			// this is temporary and is disabled as soon as user saves the webapp
+			allowRedirects = false				
 
 			return null
 		]
@@ -456,7 +481,7 @@ public class WebAppActivity extends BaseWebAppActivity {
 		AsyncBuilder.async [ builder, params |
 			// get the saved list of whitelisted domains
 			db.findByFields(DbService.TABLE_DOMAINS, #{
-				"webappId" -> webappId
+				"webappId" -> webapp.id
 			}, null, ThirdPartyDomain)
 		].then [ List<ThirdPartyDomain> whitelisted |
 			// add all whitelisted domains
@@ -481,10 +506,10 @@ public class WebAppActivity extends BaseWebAppActivity {
 					} else {
 						unblock.remove(domains.get(pos).intern());
 					}
-					Log.d("unblock", unblock.toString)
+					if (Debug.ON) Log.d("unblock", unblock.toString)
 				])
 				.setPositiveButton(R.string.unblock, [ d, pos |
-					saveWebappUnblockList(webappId, unblock)
+					saveWebappUnblockList(webapp.id, unblock)
 					wc.unblockDomains(unblock);
 					clearWebviewCache(wv)
 					wv.reload();
@@ -583,4 +608,13 @@ public class WebAppActivity extends BaseWebAppActivity {
 		val taskDesc = new TaskDescription(webapp.name, BitmapFactory.decodeFile(favIcon.absolutePath), colour);
 		setTaskDescription(taskDesc);
 	}
+
+	def shareURL(String shareUrl, String shareTitle) {
+		var share = new Intent(Intent.ACTION_SEND)
+		share.setType("text/plain")		
+		share.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET)
+		share.putExtra(Intent.EXTRA_SUBJECT, shareTitle);
+		share.putExtra(Intent.EXTRA_TEXT, shareUrl);
+		startActivity(Intent.createChooser(share, getString(R.string.menu_share)));
+	}	
 }

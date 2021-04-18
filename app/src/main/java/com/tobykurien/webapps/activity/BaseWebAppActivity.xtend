@@ -3,7 +3,6 @@ package com.tobykurien.webapps.activity
 import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -66,6 +65,8 @@ import static extension org.xtendroid.utils.AlertUtils.*
 	private ValueCallback<Uri[]> mUploadMessage2;
 	private String mCameraPhotoPath;
 
+	private static long lastWebappId = 0;
+
 	/**
 	 * Called when the activity is first created.
 	 */
@@ -89,6 +90,7 @@ import static extension org.xtendroid.utils.AlertUtils.*
 			}
 		} else {
 			webapp = new Webapp()
+			webapp.id = -1
 			webapp.url = siteUrl.toString
 			webapp.name = webapp.url
 			putFromShortcut(false)
@@ -157,7 +159,10 @@ import static extension org.xtendroid.utils.AlertUtils.*
 	override protected void onResume() {
 		super.onResume()
 		
-		if (webapp !== null) loadSiteCookies(webapp)
+		if (webapp !== null && webapp.id > 0 && lastWebappId != webapp.id) {
+			// reload cookies if we've switched to another webapp
+			loadSiteCookies(webapp)
+		}
 
 		if (reload) {
 			reload = false
@@ -168,6 +173,12 @@ import static extension org.xtendroid.utils.AlertUtils.*
 
 	override protected void onPause() {
 		super.onPause()
+		
+		if (webapp !== null && webapp.id > 0) {
+			lastWebappId = webapp.id;
+			db.saveCookies(webapp)
+		}
+		
 		CookieSyncManager.getInstance().stopSync()
 	}
 
@@ -192,10 +203,10 @@ import static extension org.xtendroid.utils.AlertUtils.*
 		if (wc === null) {
 			unblock = new HashSet<String>()
 			unblock.add(WebClient.getHost(siteUrl))
-			if (webappId >= 0) {
+			if (webapp.id >= 0) {
 				// load saved unblock list
 				var domains = db.executeForMapList(R.string.dbGetDomainNames, #{
-					"webappId" -> webappId
+					"webappId" -> webapp.id
 				})
 				for (domain : domains) {
 					unblock.add(domain.get("domain") as String)
@@ -208,12 +219,14 @@ import static extension org.xtendroid.utils.AlertUtils.*
 
 	def void loadSiteCookies(Webapp webapp) {
 		// Load cookies for webapp
+		if (Debug.COOKIE) Log.d("cookie", "DELETING ALL COOKIES")
         CookieManager.instance.removeAllCookie()
+
 		if (webapp.cookies !== null) {
 			val domain = WebClient.getRootDomain(webapp.url)
 			var cookies = webapp.cookies.split(";")
 			for (cookieStr: cookies) {
-				if (Debug.COOKIE) Log.d("cookie", "Loading cookie for " + domain + ": " + cookieStr)
+				if (Debug.COOKIE) Log.d("cookie", "Load -> " + domain + ": " + cookieStr)
 				CookieManager.instance.setCookie("https://" + domain, cookieStr.trim() + "; Domain=" + domain)
 			}
 			CookieSyncManager.getInstance().sync();
@@ -376,8 +389,10 @@ import static extension org.xtendroid.utils.AlertUtils.*
 
 		if (fullscreen) {
 			attrs.flags = attrs.flags.bitwiseOr(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+			attrs.flags = attrs.flags.bitwiseOr(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 		} else {
 			attrs.flags = attrs.flags.bitwiseAnd(WindowManager.LayoutParams.FLAG_FULLSCREEN.bitwiseNot);
+			attrs.flags = attrs.flags.bitwiseAnd(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.bitwiseNot);
 		}
 
 		getWindow().setAttributes(attrs);
@@ -392,9 +407,9 @@ import static extension org.xtendroid.utils.AlertUtils.*
 				.setPositiveButton(getString(R.string.btn_allow), new DialogInterface.OnClickListener() {
 					override void onClick(DialogInterface dialog, int id) {
 						webapp.allowLocation = true
-						if (webappId > 0) db.update(DbService.TABLE_WEBAPPS, #{
+						if (webapp.id > 0) db.update(DbService.TABLE_WEBAPPS, #{
 							'allowLocation' -> webapp.allowLocation
-						}, webappId)
+						}, webapp.id)
 						callback.invoke(origin, true, false);
 						var result = ContextCompat.checkSelfPermission(getBaseContext(), Manifest.permission.ACCESS_FINE_LOCATION);
 						if (result !== PackageManager.PERMISSION_GRANTED) {
@@ -411,9 +426,9 @@ import static extension org.xtendroid.utils.AlertUtils.*
 				.setNegativeButton(getString(R.string.btn_deny), new DialogInterface.OnClickListener() {
 						override void onClick(DialogInterface dialog, int id) {
 							webapp.allowLocation = false
-							if (webappId > 0) db.update(DbService.TABLE_WEBAPPS, #{
+							if (webapp.id > 0) db.update(DbService.TABLE_WEBAPPS, #{
 								'allowLocation' -> webapp.allowLocation
-							}, webappId)
+							}, webapp.id)
 							callback.invoke(origin, false, false);
 						}
 					})

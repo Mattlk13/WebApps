@@ -1,17 +1,14 @@
 package com.tobykurien.webapps.webviewclient
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.CookieSyncManager
 import android.webkit.WebIconDatabase
 import android.webkit.WebSettings
 import android.webkit.WebSettings.PluginState
-import android.webkit.WebSettings.TextSize
 import android.webkit.WebView
 import com.tobykurien.webapps.data.Webapp
-import com.tobykurien.webapps.utils.Settings
 import android.annotation.TargetApi
 
 import static extension com.tobykurien.webapps.utils.Dependencies.*
@@ -52,14 +49,16 @@ class WebViewUtilsApi11 extends WebViewUtils {
 
 		settings.setPluginState(PluginState.OFF);
 		settings.setDomStorageEnabled(true);
-		settings.setSupportZoom(true);
-		settings.setBuiltInZoomControls(false);
 		settings.setGeolocationEnabled(true); // allow maps, etc. to work
 		settings.setJavaScriptCanOpenWindowsAutomatically(false);
 		settings.setSaveFormData(false);
 		settings.setSavePassword(false);
 		settings.setLoadsImagesAutomatically(context.settings.isLoadImages());
 
+		settings.setSupportZoom(true);
+		settings.setBuiltInZoomControls(true);
+		settings.setDisplayZoomControls(false);
+		
 		// set preferred text size
 		if (webapp.getFontSize() >= 0) {
 			setTextSize(wv, webapp.getFontSize());
